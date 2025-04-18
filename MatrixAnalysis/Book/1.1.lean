@@ -1,4 +1,5 @@
 import Mathlib
+import Mathlib.Analysis.Complex.Basic
 import MatrixAnalysis.Data.Polynomial.Basic
 import MatrixAnalysis.Data.Matrix.Basic
 import MatrixAnalysis.Data.Matrix.Eigenvalues
@@ -172,6 +173,9 @@ def MatrixCol {n m : ℕ} (A : ℂ^{n,m}) (k : Fin m) : ℂ^{n,1}
 @[simp]
 def std_basis (n: ℕ) (k : Fin n) : ℂ^{n} := fun i ↦ if i = k then 1 else 0
 
+@[simp]
+lemma std_basis_apply (n : ℕ) (k : Fin n) : std_basis n k = fun i ↦ if i = k then 1 else 0 := rfl
+
 example {n : ℕ} (k : Fin n)
   : MatrixRow (1 : ℂ^{n²}) k = (MatrixCol 1 k).transpose := by
   simp[MatrixRow, MatrixCol, Matrix.transpose, Matrix.one_apply, eq_comm]
@@ -181,13 +185,16 @@ example {n : ℕ} (k : Fin n)
 def Matrix.toVec {R : Type*} [Semiring R] {n : ℕ} (A : R^{n, 1}) : R^{n} :=
   fun j => A j 0  -- Extract the single row
 
+@[simp]
+lemma Matrix.toVec_eq {R : Type*} [Semiring R] {n : ℕ} (A : Matrix (Fin n) (Fin 1) R) :
+    Matrix.toVec A = (fun j => A j 0) := rfl
+
 -- 2. Create the coercion instance
 instance {R : Type*} [Semiring R] {n : ℕ} : Coe (R^{n,1}) (Fin n → R) where
   coe := Matrix.toVec
 
 theorem std_basis_col_id {n:ℕ} {k:(Fin n)}
   : (MatrixCol (1 : ℂ^{n²}) k).toVec = std_basis n k := by
-  unfold std_basis Matrix.toVec
   simp[MatrixCol,Matrix.one_apply,Matrix.transpose]
 
 theorem mul_std_basis
@@ -195,10 +202,7 @@ theorem mul_std_basis
    : A *ᵥ std_basis n k = (MatrixCol A k).toVec := by
    simp[←std_basis_col_id,col]
    funext i
-   unfold Matrix.toVec
    simp [Matrix.mulVec, dotProduct]
-   change ∑ x, (A i x) * (if x = k then 1 else 0) = A i k
-   simp [Finset.sum_ite]
 
 
 lemma zero_vector {n : ℕ} {v : ℂ^{n}} : v = 0 ↔ ∀ i, v i = 0 := by
@@ -227,17 +231,16 @@ theorem diag_eig_sys
   constructor
   . exact std_basis_nonzero
 
-  . simp[mul_std_basis]     -- show standard basis vector is an eigenvector
-    ext x : 1
-    simp
-    split
-    next h =>
-      subst h
-      rfl
-    next h =>
+  . ext x     -- show standard basis vector is an eigenvector
+    simp[mul_std_basis, mulVec, dotProduct]
+    by_cases h : x = i
+    . subst h
+      simp [hdiag]
+
+    . simp [h]
       apply hdiag
-      simp[ne_eq, not_false_eq_true]
       exact h
+
 
 /- # Observation 1.17 : Having a zero eigenvalue is equivalent to being singular -/
 
@@ -246,7 +249,8 @@ def singular
   := ∃ x : ℂ^{n}, x ≠ 0 ∧ A *ᵥ x = 0
 
 def nonsingular
-  {n:ℕ} (A : ℂ^{n²}) := ∀ x : ℂ^{n}, A *ᵥ x = 0 ↔ x = 0
+  {n:ℕ} (A : ℂ^{n²}) := ∀ x : ℂ^{n}, A *ᵥ x = 0 → x = 0
+
 
 theorem nonsingular_is_not_singular
   {n:ℕ} (A : Matrix (Fin n) (Fin n) ℂ)
@@ -254,75 +258,45 @@ theorem nonsingular_is_not_singular
   simp[singular,nonsingular]
   constructor
   . intro h x
-    apply Iff.intro
-    . intro hmp
-      exact not_imp_not.mp (h x) hmp
-    . intro hmpr
-      rw[hmpr]
-      exact mulVec_zero _
+    exact not_imp_not.mp (h x)
   . intro h x hx hna
-    exact hx ((h x).mp hna)
+    apply hx
+    apply h x
+    exact hna
 
-theorem eig_zero_to_non_sing
-  {n:ℕ} (A : Matrix (Fin n) (Fin n) ℂ)
-  : is_eigenvalue A 0 ↔ singular A := by
+theorem eig_zero_iff_singular {n:ℕ} (A : ℂ^{n²}) : is_eigenvalue A 0 ↔ singular A := by
     constructor
-    . intro ⟨v, ⟨he, hz⟩⟩
-      simp at hz
-      use v
-    . intro ⟨ v, ⟨ hz, hv ⟩ ⟩
-      exact ⟨ v, ⟨ hz, by simp; exact hv ⟩  ⟩
+    . intro hmp
+      obtain ⟨eigvec, h_eigvec⟩ := hmp
+      obtain ⟨h_eigvec_nonzero, h_eigvec_nullspace⟩ := h_eigvec
+      simp at h_eigvec_nullspace
+      use eigvec
+
+    . intro hmpr
+      obtain ⟨eigvec, h_eigvec⟩ := hmpr
+      obtain ⟨h_eigvec_nonzero, h_eigvec_nullspace⟩ := h_eigvec
+      use eigvec
+      constructor
+      . exact h_eigvec_nonzero
+      . simp[h_eigvec_nullspace]
+
+theorem eig_nonzero_iff_nonsingular {n:ℕ} (A : ℂ^{n²}) : ¬is_eigenvalue A 0 ↔ nonsingular A := by
+  convert (eig_zero_iff_singular A).not
+  exact (nonsingular_is_not_singular A).symm
+
+
+theorem invertible_is_nonsingular {n : ℕ} {A : ℂ^{n²}} : Invertible A → nonsingular A := by
+  intro hA
+  refine (Matrix.ker_toLin'_eq_bot_iff (M := A)).mp ?_
+  exact (A.toLinearEquiv' hA).ker
+
 
 /- # Exercise 1 : Eigenvalues of the inverse -/
 
-lemma mul_both_sides {n:ℕ} {A B : Matrix (Fin n) (Fin n) ℂ} {u v: Matrix (Fin n) (Fin 1) ℂ}
- : A * u = v → B * A * u = B * v := by
+lemma mulVec_mul_eq {n : ℕ} {u v : ℂ^{n}} (A B : ℂ^{n²})
+ : A *ᵥ u = v → B *ᵥ A *ᵥ u = B *ᵥ v := by
    intro h
-   rw[←h,Matrix.mul_assoc]
-
-theorem eigen_inv
-  {n:ℕ} {A: ℂ^{n²}} [hia : Invertible A] {s:ℂ}
-  : is_eigenvalue A s → is_eigenvalue A⁻¹ s⁻¹ := by
-  intro ⟨ v, ⟨ v_nonzero, hv ⟩ ⟩
-  have snz : s ≠ 0 := by
-    intro h
-    rw[h,zero_smul] at hv
-    have h1 : A⁻¹ *ᵥ A *ᵥ v = A⁻¹ *ᵥ (0 : ℂ^{n}) := by rw[hv]
-    have h2 : A⁻¹ *ᵥ (0 : ℂ^{n}) = 0 := by exact Matrix.mulVec_zero A⁻¹
-    rw[h2] at h1
-    simp at h1
-    contradiction
-  use v
-  constructor
-  . exact v_nonzero
-  . have : A⁻¹ *ᵥ A *ᵥ v = A⁻¹ *ᵥ (s • v) := by rw[hv]
-    have : v = s • (A⁻¹ *ᵥ v) := by
-      simp[mulVec_smul] at this
-      exact this
-
-    have : s⁻¹ • v = (A⁻¹ *ᵥ v) := by exact (inv_smul_eq_iff₀ snz).mpr this
-    exact id (Eq.symm this)
-
-/- # Exercise 2 : If the sum of each row is 1, then 1 is an eigenvalue -/
-
-theorem sum_rows_one {n:ℕ} {A : ℂ^{(n + 1)²}}
-  : (∀ i : Fin (n + 1), ∑ j : Fin (n + 1), A i j = 1) → is_eigenvalue A 1 := by
-    intro hi
-    use (λ _ => (1 : ℂ))
-    constructor
-    . simp[zero_vector]
-    . ext i
-      simp[mulVec, dotProduct]
-      exact hi i
-
-/- # Exercise 3 : Todo -/
-
-/- # Exercise 4 : Todo -/
-
-/- # Exercise 5 : Idempotent Matrices and their eigenvalues -/
-
-example : (2 • ![3, 4, 5]) 0 = 6 := by
-  simp [Matrix.smul_cons]  -- Proof that first entry is 2*3=6
+   rw[←h]
 
 lemma smul_left_inj {n: ℕ} {a b : ℂ} {v : ℂ^{n}} (hnz : v ≠ 0)
   : a • v = b • v ↔ a = b := by
@@ -345,6 +319,65 @@ lemma smul_left_inj {n: ℕ} {a b : ℂ} {v : ℂ^{n}} (hnz : v ≠ 0)
 
   . intro hmpr
     rw[hmpr]
+
+
+theorem eigen_inv
+  {n:ℕ} {A: ℂ^{n²}} [hi : Invertible A] {s:ℂ}
+  : is_eigenvalue A s → is_eigenvalue A⁻¹ s⁻¹ := by
+  intro h
+  obtain ⟨eigvec, h_eigvec⟩ := h
+  obtain ⟨h_eigvec_nonzero, h_eigvec_apply⟩ := h_eigvec
+  use eigvec
+  constructor
+  . exact h_eigvec_nonzero
+
+  . apply_fun (A *ᵥ ·)  -- Multiply both sides by A
+
+    -- Simplify
+    simp[mulVec_smul, h_eigvec_apply,smul_smul]
+    rw[mul_comm, Complex.mul_inv_cancel, one_smul]
+
+    -- A is nonsingular since it's invertible
+    have nonsingular_A : nonsingular A := by exact invertible_is_nonsingular hi
+
+    . intro hs
+
+      -- Since we have hs : s = 0, we can substitute it in to get
+      -- A * v = 0
+      subst hs
+      rw [zero_smul] at h_eigvec_apply
+
+      -- But A is nonsingular, so since  A * v = 0, v = 0
+      have : eigvec = 0 := by exact (nonsingular_A eigvec) h_eigvec_apply
+
+      -- But this contradicts the assumption that v is 0
+      -- So s ≠ 0
+      contradiction
+
+    -- A is injective since it is invertible.
+    . exact (A.toLinearEquiv' hi).injective
+
+
+/- # Exercise 2 : If the sum of each row is 1, then 1 is an eigenvalue -/
+
+theorem sum_rows_one {n:ℕ} {A : ℂ^{(n + 1)²}}
+  : (∀ i : Fin (n + 1), ∑ j : Fin (n + 1), A i j = 1) → is_eigenvalue A 1 := by
+    intro hi
+    use (λ _ => (1 : ℂ))
+    constructor
+    . simp[zero_vector]
+    . ext i
+      simp[mulVec, dotProduct]
+      exact hi i
+
+/- # Exercise 3 : Todo -/
+
+/- # Exercise 4 : Todo -/
+
+/- # Exercise 5 : Idempotent Matrices and their eigenvalues -/
+
+example : (2 • ![3, 4, 5]) 0 = 6 := by
+  simp [Matrix.smul_cons]  -- Proof that first entry is 2*3=6
 
 
   --rw[matrix_neq_exists] at hnz
